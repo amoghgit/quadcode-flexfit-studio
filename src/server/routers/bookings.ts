@@ -4,6 +4,12 @@ import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { bookings, classes, memberships, checkins, users } from "@/db/schema";
 import { router, protectedProcedure, staffProcedure } from "../trpc";
 import { WaitlistService } from "../services/WaitlistService";
+import {
+  classIdSchema,
+  bookingIdSchema,
+  includePastSchema,
+  markAttendedSchema,
+} from "@/lib/validations";
 
 /**
  * Members may cancel free of charge up to this many hours before the class
@@ -39,7 +45,7 @@ async function activeMembershipFor(
 
 export const bookingsRouter = router({
   mine: protectedProcedure
-    .input(z.object({ includePast: z.boolean().default(false) }).default({}))
+    .input(includePastSchema)
     .query(async ({ ctx, input }) => {
       const rows = await ctx.db
         .select({
@@ -66,7 +72,7 @@ export const bookingsRouter = router({
     }),
 
   book: protectedProcedure
-    .input(z.object({ classId: z.number() }))
+    .input(classIdSchema)
     .mutation(async ({ ctx, input }) => {
       const cls = await ctx.db
         .select()
@@ -157,7 +163,7 @@ export const bookingsRouter = router({
     }),
 
   cancel: protectedProcedure
-    .input(z.object({ bookingId: z.number() }))
+    .input(bookingIdSchema)
     .mutation(async ({ ctx, input }) => {
       const row = await ctx.db
         .select({ booking: bookings, cls: classes })
@@ -219,12 +225,7 @@ export const bookingsRouter = router({
     }),
 
   markAttended: staffProcedure
-    .input(
-      z.object({
-        bookingId: z.number(),
-        source: z.enum(["front_desk", "kiosk", "app"]).default("front_desk"),
-      }),
-    )
+    .input(markAttendedSchema)
     .mutation(async ({ ctx, input }) => {
       const booking = await ctx.db
         .select()
@@ -257,7 +258,7 @@ export const bookingsRouter = router({
     }),
 
   rosterFor: staffProcedure
-    .input(z.object({ classId: z.number() }))
+    .input(classIdSchema)
     .query(async ({ ctx, input }) => {
       return ctx.db
         .select({
@@ -309,7 +310,7 @@ export const bookingsRouter = router({
     }),
 
   checkinCountFor: staffProcedure
-    .input(z.object({ classId: z.number() }))
+    .input(classIdSchema)
     .query(async ({ ctx, input }) => {
       const [result] = await ctx.db
         .select({ count: sql<number>`count(*)` })
