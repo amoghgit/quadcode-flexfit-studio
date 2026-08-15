@@ -89,7 +89,7 @@ describe("Booking Service Baseline", () => {
 
   it("allows a member to book a class and deducts credits", async () => {
     // Use tRPC caller directly
-    const caller = appRouter.createCaller({ db, user: { id: userId, role: "member", name: "Test User", email: "test@example.com" } });
+    const caller = appRouter.createCaller({ db: db as any, user: { id: userId, role: "member", name: "Test User", email: "test@example.com" } as any } as any);
     
     const result = await caller.bookings.book({ classId });
     
@@ -106,7 +106,7 @@ describe("Booking Service Baseline", () => {
     const [otherMs] = await db.insert(memberships).values({ userId: otherUser.id, planId: limitedPlanId, startDate: "2026-01-01", endDate: "2099-01-01", creditsRemaining: 10 }).returning();
     await db.insert(bookings).values({ classId, userId: otherUser.id, membershipId: otherMs.id, status: "booked", creditsUsed: 1 });
 
-    const caller = appRouter.createCaller({ db, user: { id: userId, role: "member", name: "Test User", email: "test@example.com" } });
+    const caller = appRouter.createCaller({ db: db as any, user: { id: userId, role: "member", name: "Test User", email: "test@example.com" } as any } as any);
     
     const result = await caller.bookings.book({ classId });
     
@@ -130,13 +130,13 @@ describe("Booking Service Baseline", () => {
       .returning();
 
     // User books
-    const caller = appRouter.createCaller({ db, user: { id: userId, role: "member", name: "Test User", email: "test@example.com" } });
+    const caller = appRouter.createCaller({ db: db as any, user: { id: userId, role: "member", name: "Test User", email: "test@example.com" } as any } as any);
     const booking = await caller.bookings.book({ classId: cls.id });
     
     // Other user waitlists
     const [otherUser] = await db.insert(users).values({ email: "other@example.com", passwordHash: "h", name: "O", role: "member" }).returning();
     const [otherMs] = await db.insert(memberships).values({ userId: otherUser.id, planId: limitedPlanId, startDate: "2026-01-01", endDate: "2099-01-01", creditsRemaining: 10 }).returning();
-    const otherCaller = appRouter.createCaller({ db, user: { id: otherUser.id, role: "member", name: "O", email: "o@example.com" } });
+    const otherCaller = appRouter.createCaller({ db: db as any, user: { id: otherUser.id, role: "member", name: "O", email: "o@example.com" } as any } as any);
     const waitlistBooking = await otherCaller.bookings.book({ classId: cls.id });
 
     // Cancel first user's booking

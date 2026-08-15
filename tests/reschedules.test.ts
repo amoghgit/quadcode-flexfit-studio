@@ -89,7 +89,7 @@ describe("Reschedule Service Baseline", () => {
   });
 
   it("reschedules free of charge and carries over creditsUsed", async () => {
-    const caller = appRouter.createCaller({ db, user: { id: userId, role: "member", name: "R", email: "r@test.com" } });
+    const caller = appRouter.createCaller({ db: db as any, user: { id: userId, role: "member", name: "R", email: "r@test.com" } as any } as any);
     const res = await caller.reschedules.reschedule({ fromBookingId: originalBookingId, toClassId: newClassId });
     
     expect(res.ok).toBe(true);
@@ -122,7 +122,7 @@ describe("Reschedule Service Baseline", () => {
       creditsUsed: 0,
     }).returning();
 
-    const caller = appRouter.createCaller({ db, user: { id: userId, role: "member", name: "R", email: "r@test.com" } });
+    const caller = appRouter.createCaller({ db: db as any, user: { id: userId, role: "member", name: "R", email: "r@test.com" } as any } as any);
     await caller.reschedules.reschedule({ fromBookingId: originalBookingId, toClassId: newClassId });
     
     // Check waitlisted user - SHOULD still be waitlisted because of the bug

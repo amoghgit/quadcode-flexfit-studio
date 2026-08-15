@@ -3,12 +3,8 @@ import { TRPCError } from "@trpc/server";
 import { eq } from "drizzle-orm";
 import { membershipPlans, memberships, payments } from "@/db/schema";
 import { router, publicProcedure, protectedProcedure, adminProcedure } from "../trpc";
-
-function addDays(dateIso: string, days: number): string {
-  const d = new Date(dateIso);
-  d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
-}
+import { MembershipService } from "../services/MembershipService";
+import { PaymentService } from "../services/PaymentService";
 
 export const plansRouter = router({
   list: publicProcedure
@@ -42,31 +38,23 @@ export const plansRouter = router({
         });
       }
 
-      const today = new Date().toISOString().slice(0, 10);
+      return ctx.db.transaction(async (tx: any) => {
+        const membership = await MembershipService.createMembership(
+          tx,
+          ctx.user.id,
+          plan,
+        );
 
-      const membership = await ctx.db
-        .insert(memberships)
-        .values({
-          userId: ctx.user.id,
-          planId: plan.id,
-          startDate: today,
-          endDate: addDays(today, plan.durationDays),
-          creditsRemaining: plan.classCredits,
-          status: "active",
-        })
-        .returning()
-        .get();
+        await PaymentService.createPayment(
+          tx,
+          ctx.user.id,
+          membership.id,
+          plan.priceCents,
+          input.method,
+        );
 
-      await ctx.db.insert(payments).values({
-        userId: ctx.user.id,
-        membershipId: membership.id,
-        amountCents: plan.priceCents,
-        method: input.method,
-        status: "paid",
-        reference: `PAY-${Date.now()}`,
+        return membership;
       });
-
-      return membership;
     }),
 
   create: adminProcedure
