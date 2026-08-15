@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach } from "vitest";
-import { getTestDb, clearTestDb } from "./db";
+import { getTestDb, clearTestDb, testUser } from "./db";
 import {
   users,
   classes,
@@ -7,14 +7,12 @@ import {
   memberships,
   membershipPlans,
 } from "../src/db/schema";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { appRouter } from "../src/server/routers/_app";
 
 describe("Booking Service Baseline", () => {
   const db = getTestDb();
   let userId: number;
-  let memberId: number;
-  let unlimitedPlanId: number;
   let limitedPlanId: number;
   let membershipId: number;
   let classId: number;
@@ -38,7 +36,7 @@ describe("Booking Service Baseline", () => {
       .returning();
     userId = user.id;
 
-    const [unlimitedPlan] = await db
+    await db
       .insert(membershipPlans)
       .values({
         name: "Unlimited",
@@ -47,7 +45,6 @@ describe("Booking Service Baseline", () => {
         classCredits: 999, // UNLIMITED_CREDITS
       })
       .returning();
-    unlimitedPlanId = unlimitedPlan.id;
 
     const [limitedPlan] = await db
       .insert(membershipPlans)
@@ -87,11 +84,12 @@ describe("Booking Service Baseline", () => {
     classId = cls.id;
   });
 
+  function memberCaller() {
+    return appRouter.createCaller({ db, user: testUser({ id: userId, role: "member", name: "Test User", email: "test@example.com" }), token: undefined });
+  }
+
   it("allows a member to book a class and deducts credits", async () => {
-    // Use tRPC caller directly
-    const caller = appRouter.createCaller({ db, user: { id: userId, role: "member", name: "Test User", email: "test@example.com" } });
-    
-    const result = await caller.bookings.book({ classId });
+    const result = await memberCaller().bookings.book({ classId });
     
     expect(result.status).toBe("booked");
     expect(result.creditsUsed).toBe(1);
@@ -106,9 +104,7 @@ describe("Booking Service Baseline", () => {
     const [otherMs] = await db.insert(memberships).values({ userId: otherUser.id, planId: limitedPlanId, startDate: "2026-01-01", endDate: "2099-01-01", creditsRemaining: 10 }).returning();
     await db.insert(bookings).values({ classId, userId: otherUser.id, membershipId: otherMs.id, status: "booked", creditsUsed: 1 });
 
-    const caller = appRouter.createCaller({ db, user: { id: userId, role: "member", name: "Test User", email: "test@example.com" } });
-    
-    const result = await caller.bookings.book({ classId });
+    const result = await memberCaller().bookings.book({ classId });
     
     expect(result.status).toBe("waitlisted");
     expect(result.creditsUsed).toBe(0);
@@ -130,17 +126,16 @@ describe("Booking Service Baseline", () => {
       .returning();
 
     // User books
-    const caller = appRouter.createCaller({ db, user: { id: userId, role: "member", name: "Test User", email: "test@example.com" } });
-    const booking = await caller.bookings.book({ classId: cls.id });
+    const booking = await memberCaller().bookings.book({ classId: cls.id });
     
     // Other user waitlists
     const [otherUser] = await db.insert(users).values({ email: "other@example.com", passwordHash: "h", name: "O", role: "member" }).returning();
     const [otherMs] = await db.insert(memberships).values({ userId: otherUser.id, planId: limitedPlanId, startDate: "2026-01-01", endDate: "2099-01-01", creditsRemaining: 10 }).returning();
-    const otherCaller = appRouter.createCaller({ db, user: { id: otherUser.id, role: "member", name: "O", email: "o@example.com" } });
+    const otherCaller = appRouter.createCaller({ db, user: testUser({ id: otherUser.id, role: "member", name: "O", email: "o@example.com" }), token: undefined });
     const waitlistBooking = await otherCaller.bookings.book({ classId: cls.id });
 
     // Cancel first user's booking
-    const cancelRes = await caller.bookings.cancel({ bookingId: booking.id });
+    const cancelRes = await memberCaller().bookings.cancel({ bookingId: booking.id });
     expect(cancelRes.refunded).toBe(true);
 
     const firstUserMs = await db.select().from(memberships).where(eq(memberships.id, membershipId)).get();
@@ -155,36 +150,24 @@ describe("Booking Service Baseline", () => {
   });
 
   it("rejects booking when member has insufficient credits", async () => {
-    // Set credits to 0
     await db.update(memberships).set({ creditsRemaining: 0 }).where(eq(memberships.id, membershipId));
-
-    const caller = appRouter.createCaller({ db, user: { id: userId, role: "member", name: "Test User", email: "test@example.com" } });
-
-    await expect(caller.bookings.book({ classId })).rejects.toThrow("Not enough class credits remaining.");
+    await expect(memberCaller().bookings.book({ classId })).rejects.toThrow("Not enough class credits remaining.");
   });
 
   it("rejects booking when member has no active membership", async () => {
-    // Expire the membership
     await db.update(memberships).set({ status: "expired" }).where(eq(memberships.id, membershipId));
-
-    const caller = appRouter.createCaller({ db, user: { id: userId, role: "member", name: "Test User", email: "test@example.com" } });
-
-    await expect(caller.bookings.book({ classId })).rejects.toThrow("An active membership is required to book classes.");
+    await expect(memberCaller().bookings.book({ classId })).rejects.toThrow("An active membership is required to book classes.");
   });
 
   it("prevents duplicate bookings for the same class", async () => {
-    const caller = appRouter.createCaller({ db, user: { id: userId, role: "member", name: "Test User", email: "test@example.com" } });
-
-    await caller.bookings.book({ classId });
-    await expect(caller.bookings.book({ classId })).rejects.toThrow("You are already on the list for this class.");
+    await memberCaller().bookings.book({ classId });
+    await expect(memberCaller().bookings.book({ classId })).rejects.toThrow("You are already on the list for this class.");
   });
 
   it("does not deduct credits for unlimited membership (999)", async () => {
-    // Give user an unlimited membership
     await db.update(memberships).set({ creditsRemaining: 999 }).where(eq(memberships.id, membershipId));
 
-    const caller = appRouter.createCaller({ db, user: { id: userId, role: "member", name: "Test User", email: "test@example.com" } });
-    const result = await caller.bookings.book({ classId });
+    const result = await memberCaller().bookings.book({ classId });
 
     expect(result.status).toBe("booked");
     expect(result.creditsUsed).toBe(1);
@@ -208,8 +191,7 @@ describe("Booking Service Baseline", () => {
       })
       .returning();
 
-    const caller = appRouter.createCaller({ db, user: { id: userId, role: "member", name: "Test User", email: "test@example.com" } });
-    const booking = await caller.bookings.book({ classId: nearCls.id });
+    const booking = await memberCaller().bookings.book({ classId: nearCls.id });
     expect(booking.creditsUsed).toBe(1);
 
     // Credits now 9
@@ -217,7 +199,7 @@ describe("Booking Service Baseline", () => {
     expect(msBefore?.creditsRemaining).toBe(9);
 
     // Cancel inside window - should NOT refund
-    const cancelRes = await caller.bookings.cancel({ bookingId: booking.id });
+    const cancelRes = await memberCaller().bookings.cancel({ bookingId: booking.id });
     expect(cancelRes.refunded).toBe(false);
 
     // Credits should remain at 9 (no refund)
@@ -226,15 +208,11 @@ describe("Booking Service Baseline", () => {
   });
 
   it("staff (trainer) can cancel another member's booking", async () => {
-    // Create a trainer
     const [trainer] = await db.insert(users).values({ email: "trainer@test.com", passwordHash: "h", name: "T", role: "trainer" }).returning();
 
-    // Member books
-    const memberCaller = appRouter.createCaller({ db, user: { id: userId, role: "member", name: "Test User", email: "test@example.com" } });
-    const booking = await memberCaller.bookings.book({ classId });
+    const booking = await memberCaller().bookings.book({ classId });
 
-    // Trainer cancels it
-    const trainerCaller = appRouter.createCaller({ db, user: { id: trainer.id, role: "trainer", name: "T", email: "trainer@test.com" } });
+    const trainerCaller = appRouter.createCaller({ db, user: testUser({ id: trainer.id, role: "trainer", name: "T", email: "trainer@test.com" }), token: undefined });
     const cancelRes = await trainerCaller.bookings.cancel({ bookingId: booking.id });
     expect(cancelRes.ok).toBe(true);
 

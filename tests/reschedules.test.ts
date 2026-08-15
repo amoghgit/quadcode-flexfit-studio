@@ -1,14 +1,13 @@
-import { describe, it, expect, beforeAll, beforeEach } from "vitest";
-import { getTestDb, clearTestDb } from "./db";
+import { describe, it, expect, beforeEach } from "vitest";
+import { getTestDb, clearTestDb, testUser } from "./db";
 import {
   users,
   classes,
   bookings,
   memberships,
   membershipPlans,
-  reschedules,
 } from "../src/db/schema";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { appRouter } from "../src/server/routers/_app";
 
 describe("Reschedule Service Baseline", () => {
@@ -88,9 +87,12 @@ describe("Reschedule Service Baseline", () => {
     originalBookingId = booking.id;
   });
 
+  function caller() {
+    return appRouter.createCaller({ db, user: testUser({ id: userId, role: "member", name: "R", email: "r@test.com" }), token: undefined });
+  }
+
   it("reschedules free of charge and carries over creditsUsed", async () => {
-    const caller = appRouter.createCaller({ db, user: { id: userId, role: "member", name: "R", email: "r@test.com" } });
-    const res = await caller.reschedules.reschedule({ fromBookingId: originalBookingId, toClassId: newClassId });
+    const res = await caller().reschedules.reschedule({ fromBookingId: originalBookingId, toClassId: newClassId });
     
     expect(res.ok).toBe(true);
     expect(res.newStatus).toBe("booked");
@@ -122,8 +124,7 @@ describe("Reschedule Service Baseline", () => {
       creditsUsed: 0,
     }).returning();
 
-    const caller = appRouter.createCaller({ db, user: { id: userId, role: "member", name: "R", email: "r@test.com" } });
-    await caller.reschedules.reschedule({ fromBookingId: originalBookingId, toClassId: newClassId });
+    await caller().reschedules.reschedule({ fromBookingId: originalBookingId, toClassId: newClassId });
     
     // Check waitlisted user - SHOULD still be waitlisted because of the bug
     const waitlistUser = await db.select().from(bookings).where(eq(bookings.id, waitlistB.id)).get();
@@ -157,10 +158,8 @@ describe("Reschedule Service Baseline", () => {
       })
       .returning();
 
-    const caller = appRouter.createCaller({ db, user: { id: userId, role: "member", name: "R", email: "r@test.com" } });
-
     await expect(
-      caller.reschedules.reschedule({ fromBookingId: nearBooking.id, toClassId: newClassId })
+      caller().reschedules.reschedule({ fromBookingId: nearBooking.id, toClassId: newClassId })
     ).rejects.toThrow("You can only reschedule up to 4 hours before the class starts.");
   });
 
@@ -177,10 +176,8 @@ describe("Reschedule Service Baseline", () => {
       })
       .returning();
 
-    const caller = appRouter.createCaller({ db, user: { id: userId, role: "member", name: "R", email: "r@test.com" } });
-
     await expect(
-      caller.reschedules.reschedule({ fromBookingId: originalBookingId, toClassId: hiitCls.id })
+      caller().reschedules.reschedule({ fromBookingId: originalBookingId, toClassId: hiitCls.id })
     ).rejects.toThrow("You can only reschedule to a class with the same name.");
   });
 });

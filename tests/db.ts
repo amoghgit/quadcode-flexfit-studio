@@ -4,12 +4,16 @@ import * as schema from "../src/db/schema";
 import { execSync } from "child_process";
 import fs from "fs";
 import crypto from "crypto";
+import type { User } from "../src/db/schema";
 
-let _db: ReturnType<typeof drizzle> | null = null;
+/** The typed database instance matching the production db type. */
+type AppDb = ReturnType<typeof drizzle<typeof schema>>;
+
+let _db: AppDb | null = null;
 let _client: ReturnType<typeof createClient> | null = null;
 const DB_FILE = `test-flexfit-${crypto.randomBytes(4).toString("hex")}.db`;
 
-export function getTestDb() {
+export function getTestDb(): AppDb {
   if (_db) return _db;
 
   // Cleanup old test DB if it exists
@@ -43,7 +47,7 @@ export default {
   return _db;
 }
 
-export async function clearTestDb(db: ReturnType<typeof drizzle>) {
+export async function clearTestDb(db: AppDb) {
   await db.delete(schema.reschedules);
   await db.delete(schema.corporateBookings);
   await db.delete(schema.companyMembers);
@@ -58,4 +62,23 @@ export async function clearTestDb(db: ReturnType<typeof drizzle>) {
   await db.delete(schema.membershipPlans);
   await db.delete(schema.trainerAvailability);
   await db.delete(schema.users);
+}
+
+/**
+ * Build a minimal User object suitable for appRouter.createCaller().
+ * Fills in required fields that tests don't care about with safe defaults.
+ */
+export function testUser(overrides: {
+  id: number;
+  role: User["role"];
+  name: string;
+  email: string;
+}): User {
+  return {
+    passwordHash: "test-hash",
+    phone: null,
+    active: true,
+    createdAt: new Date().toISOString(),
+    ...overrides,
+  };
 }
