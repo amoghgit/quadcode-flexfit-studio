@@ -11,7 +11,9 @@ import {
  * Accepts both the root `db` instance and a Drizzle transaction context,
  * since they share the same query interface.
  */
-type DbClient = typeof import("@/db").db;
+type DbClient =
+  | typeof import("@/db").db
+  | Parameters<Parameters<typeof import("@/db").db.transaction>[0]>[0];
 
 /** Hardcoded unlimited-credits sentinel matching the existing codebase. */
 const UNLIMITED_CREDITS = 999;
