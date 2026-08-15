@@ -443,14 +443,14 @@ describe("WaitlistService", () => {
       const bookerCaller = appRouter.createCaller({
         db,
         user: { id: booker.id, role: "member", name: "Booker", email: "booker@test.com" },
-      });
+      } as any);
       const booking = await bookerCaller.bookings.book({ classId: cls.id });
 
       // Waiter books (waitlisted because capacity=1)
       const waiterCaller = appRouter.createCaller({
         db,
         user: { id: waiter.id, role: "member", name: "Waiter", email: "waiter@test.com" },
-      });
+      } as any);
       const waitlistBooking = await waiterCaller.bookings.book({ classId: cls.id });
       expect(waitlistBooking.status).toBe("waitlisted");
 
@@ -516,7 +516,7 @@ describe("WaitlistService", () => {
       const waiter1Caller = appRouter.createCaller({
         db,
         user: { id: waiter1.id, role: "member", name: "W1", email: "w1@test.com" },
-      });
+      } as any);
       await waiter1Caller.bookings.cancel({ bookingId: wb1.id });
 
       // Waiter2 should still be waitlisted — cancelling a waitlisted booking does not promote
@@ -594,7 +594,7 @@ describe("WaitlistService", () => {
       const caller = appRouter.createCaller({
         db,
         user: { id: user.id, role: "member", name: "R", email: "r@test.com" },
-      });
+      } as any);
       await caller.reschedules.reschedule({ fromBookingId: booking.id, toClassId: cls2.id });
 
       // BUG: Waitlisted user is NOT promoted
