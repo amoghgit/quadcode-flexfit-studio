@@ -3,15 +3,8 @@ import { TRPCError } from "@trpc/server";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { bookings, classes, memberships, checkins, users } from "@/db/schema";
 import { router, protectedProcedure, staffProcedure } from "../trpc";
+import { FREE_CANCELLATION_HOURS, UNLIMITED_CREDITS } from "@/lib/constants";
 
-/**
- * Members may cancel free of charge up to this many hours before the class
- * starts. Cancelling later still frees the spot but forfeits the credit.
- */
-export const FREE_CANCELLATION_HOURS = 12;
-
-/** Plans with this many credits are treated as unlimited and never decrement. */
-export const UNLIMITED_CREDITS = 999;
 
 function hoursUntil(iso: string, now = new Date()): number {
   return (new Date(iso).getTime() - now.getTime()) / 36e5;
