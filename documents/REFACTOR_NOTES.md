@@ -114,5 +114,6 @@ Currently, neither router wraps cancellation in a transaction (this is a pre-exi
 ## 7. Remaining Dependencies
 
 - **BookingService** (not yet extracted): The `bookings.ts` router's `cancel` mutation still contains inline business logic for refund calculation and authorization checks. The waitlist promotion is now delegated to `WaitlistService`, but other logic remains in the router.
-- **CorporateBookingService** (not yet extracted): Same situation — `corporate-bookings.ts` cancel mutation still has inline refund and authorization logic.
+- **CorporateBookingService**: Successfully extracted into `src/server/services/CorporateBookingService.ts`. It now encapsulates the `CORPORATE_FREE_CANCELLATION_HOURS` logic, refund generation, credit deduction, waitlist fallback, and waitlist promotion (delegating to WaitlistService). The `corporate_bookings` database table is preserved without schema migration, and a known bug (where `corporateBookings.markAttended` inserts a `checkins` record with `bookingId: null`) is explicitly preserved and tested.
+- **Validation Cleanup**: Extracted shared Zod validation schemas (`classIdSchema`, `bookingIdSchema`, `includePastSchema`, `markAttendedSchema`) into `src/lib/validations.ts` to reduce code duplication across `corporate-bookings.ts` and `bookings.ts`.
 - **Constants**: `FREE_CANCELLATION_HOURS`, `UNLIMITED_CREDITS`, `CORPORATE_FREE_CANCELLATION_HOURS`, and `FREE_RESCHEDULE_HOURS` remain defined in their respective router files. A shared constants file is a future refactoring opportunity.
