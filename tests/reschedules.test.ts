@@ -130,4 +130,57 @@ describe("Reschedule Service Baseline", () => {
     
     expect(waitlistUser?.status).toBe("waitlisted"); // The bug is preserved
   });
+
+  it("rejects reschedule when original class is less than 4 hours away", async () => {
+    // Create a class only 2 hours away
+    const [nearCls] = await db
+      .insert(classes)
+      .values({
+        name: "Yoga",
+        room: "C",
+        capacity: 10,
+        startsAt: new Date(Date.now() + 2 * 3600000).toISOString(), // 2 hours away
+        durationMin: 60,
+        creditCost: 1,
+      })
+      .returning();
+
+    // Book it directly in the DB (bypassing time checks since we're testing reschedule not book)
+    const [nearBooking] = await db
+      .insert(bookings)
+      .values({
+        classId: nearCls.id,
+        userId,
+        membershipId,
+        status: "booked",
+        creditsUsed: 1,
+      })
+      .returning();
+
+    const caller = appRouter.createCaller({ db, user: { id: userId, role: "member", name: "R", email: "r@test.com" } });
+
+    await expect(
+      caller.reschedules.reschedule({ fromBookingId: nearBooking.id, toClassId: newClassId })
+    ).rejects.toThrow("You can only reschedule up to 4 hours before the class starts.");
+  });
+
+  it("rejects reschedule to a different class type (name mismatch)", async () => {
+    const [hiitCls] = await db
+      .insert(classes)
+      .values({
+        name: "HIIT",  // different from "Yoga"
+        room: "D",
+        capacity: 10,
+        startsAt: new Date(Date.now() + 48 * 3600000).toISOString(),
+        durationMin: 60,
+        creditCost: 1,
+      })
+      .returning();
+
+    const caller = appRouter.createCaller({ db, user: { id: userId, role: "member", name: "R", email: "r@test.com" } });
+
+    await expect(
+      caller.reschedules.reschedule({ fromBookingId: originalBookingId, toClassId: hiitCls.id })
+    ).rejects.toThrow("You can only reschedule to a class with the same name.");
+  });
 });

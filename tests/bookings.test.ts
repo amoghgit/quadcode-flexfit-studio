@@ -153,4 +153,92 @@ describe("Booking Service Baseline", () => {
     const otherUserMsAfter = await db.select().from(memberships).where(eq(memberships.id, otherMs.id)).get();
     expect(otherUserMsAfter?.creditsRemaining).toBe(9);
   });
+
+  it("rejects booking when member has insufficient credits", async () => {
+    // Set credits to 0
+    await db.update(memberships).set({ creditsRemaining: 0 }).where(eq(memberships.id, membershipId));
+
+    const caller = appRouter.createCaller({ db, user: { id: userId, role: "member", name: "Test User", email: "test@example.com" } });
+
+    await expect(caller.bookings.book({ classId })).rejects.toThrow("Not enough class credits remaining.");
+  });
+
+  it("rejects booking when member has no active membership", async () => {
+    // Expire the membership
+    await db.update(memberships).set({ status: "expired" }).where(eq(memberships.id, membershipId));
+
+    const caller = appRouter.createCaller({ db, user: { id: userId, role: "member", name: "Test User", email: "test@example.com" } });
+
+    await expect(caller.bookings.book({ classId })).rejects.toThrow("An active membership is required to book classes.");
+  });
+
+  it("prevents duplicate bookings for the same class", async () => {
+    const caller = appRouter.createCaller({ db, user: { id: userId, role: "member", name: "Test User", email: "test@example.com" } });
+
+    await caller.bookings.book({ classId });
+    await expect(caller.bookings.book({ classId })).rejects.toThrow("You are already on the list for this class.");
+  });
+
+  it("does not deduct credits for unlimited membership (999)", async () => {
+    // Give user an unlimited membership
+    await db.update(memberships).set({ creditsRemaining: 999 }).where(eq(memberships.id, membershipId));
+
+    const caller = appRouter.createCaller({ db, user: { id: userId, role: "member", name: "Test User", email: "test@example.com" } });
+    const result = await caller.bookings.book({ classId });
+
+    expect(result.status).toBe("booked");
+    expect(result.creditsUsed).toBe(1);
+
+    // Credits should remain at 999 (unlimited never decrements)
+    const ms = await db.select().from(memberships).where(eq(memberships.id, membershipId)).get();
+    expect(ms?.creditsRemaining).toBe(999);
+  });
+
+  it("forfeits credits when cancelling inside the 12-hour window", async () => {
+    // Create class only 6 hours away (inside the 12-hour window)
+    const [nearCls] = await db
+      .insert(classes)
+      .values({
+        name: "Yoga Near",
+        room: "A",
+        capacity: 10,
+        startsAt: new Date(Date.now() + 6 * 3600000).toISOString(), // 6 hours away
+        durationMin: 60,
+        creditCost: 1,
+      })
+      .returning();
+
+    const caller = appRouter.createCaller({ db, user: { id: userId, role: "member", name: "Test User", email: "test@example.com" } });
+    const booking = await caller.bookings.book({ classId: nearCls.id });
+    expect(booking.creditsUsed).toBe(1);
+
+    // Credits now 9
+    const msBefore = await db.select().from(memberships).where(eq(memberships.id, membershipId)).get();
+    expect(msBefore?.creditsRemaining).toBe(9);
+
+    // Cancel inside window - should NOT refund
+    const cancelRes = await caller.bookings.cancel({ bookingId: booking.id });
+    expect(cancelRes.refunded).toBe(false);
+
+    // Credits should remain at 9 (no refund)
+    const msAfter = await db.select().from(memberships).where(eq(memberships.id, membershipId)).get();
+    expect(msAfter?.creditsRemaining).toBe(9);
+  });
+
+  it("staff (trainer) can cancel another member's booking", async () => {
+    // Create a trainer
+    const [trainer] = await db.insert(users).values({ email: "trainer@test.com", passwordHash: "h", name: "T", role: "trainer" }).returning();
+
+    // Member books
+    const memberCaller = appRouter.createCaller({ db, user: { id: userId, role: "member", name: "Test User", email: "test@example.com" } });
+    const booking = await memberCaller.bookings.book({ classId });
+
+    // Trainer cancels it
+    const trainerCaller = appRouter.createCaller({ db, user: { id: trainer.id, role: "trainer", name: "T", email: "trainer@test.com" } });
+    const cancelRes = await trainerCaller.bookings.cancel({ bookingId: booking.id });
+    expect(cancelRes.ok).toBe(true);
+
+    const b = await db.select().from(bookings).where(eq(bookings.id, booking.id)).get();
+    expect(b?.status).toBe("cancelled");
+  });
 });
