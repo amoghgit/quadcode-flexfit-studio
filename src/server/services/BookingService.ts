@@ -159,26 +159,28 @@ export const BookingService = {
     const isFull = Number(count) >= cls.capacity;
 
     // --- atomic: insert booking + deduct credits ---
-    const created = await db
-      .insert(bookings)
-      .values({
-        classId: cls.id,
-        userId,
-        membershipId: membership.id,
-        status: isFull ? "waitlisted" : "booked",
-        creditsUsed: isFull ? 0 : cls.creditCost,
-      })
-      .returning()
-      .get();
+    return db.transaction(async (tx) => {
+      const created = await tx
+        .insert(bookings)
+        .values({
+          classId: cls.id,
+          userId,
+          membershipId: membership.id,
+          status: isFull ? "waitlisted" : "booked",
+          creditsUsed: isFull ? 0 : cls.creditCost,
+        })
+        .returning()
+        .get();
 
-    if (!isFull && !unlimited) {
-      await db
-        .update(memberships)
-        .set({ creditsRemaining: membership.creditsRemaining - cls.creditCost })
-        .where(eq(memberships.id, membership.id));
-    }
+      if (!isFull && !unlimited) {
+        await tx
+          .update(memberships)
+          .set({ creditsRemaining: membership.creditsRemaining - cls.creditCost })
+          .where(eq(memberships.id, membership.id));
+      }
 
-    return created;
+      return created;
+    });
   },
 
   /**
@@ -229,67 +231,69 @@ export const BookingService = {
       row.booking.creditsUsed > 0;
 
     // --- atomic: cancel + refund + promote ---
-    await db
-      .update(bookings)
-      .set({ status: "cancelled", cancelledAt: new Date().toISOString() })
-      .where(eq(bookings.id, row.booking.id));
+    await db.transaction(async (tx) => {
+      await tx
+        .update(bookings)
+        .set({ status: "cancelled", cancelledAt: new Date().toISOString() })
+        .where(eq(bookings.id, row.booking.id));
 
-    if (refundable && row.booking.membershipId) {
-      const ms = await db
-        .select()
-        .from(memberships)
-        .where(eq(memberships.id, row.booking.membershipId))
-        .get();
+      if (refundable && row.booking.membershipId) {
+        const ms = await tx
+          .select()
+          .from(memberships)
+          .where(eq(memberships.id, row.booking.membershipId))
+          .get();
 
-      if (ms && ms.creditsRemaining < UNLIMITED_CREDITS) {
-        await db
-          .update(memberships)
-          .set({ creditsRemaining: ms.creditsRemaining + row.booking.creditsUsed })
-          .where(eq(memberships.id, ms.id));
+        if (ms && ms.creditsRemaining < UNLIMITED_CREDITS) {
+          await tx
+            .update(memberships)
+            .set({ creditsRemaining: ms.creditsRemaining + row.booking.creditsUsed })
+            .where(eq(memberships.id, ms.id));
+        }
       }
-    }
 
-    // Freeing a confirmed spot promotes the member who has waited longest.
-    if (row.booking.status === "booked") {
-      const next = await db
-        .select()
-        .from(bookings)
-        .where(
-          and(
-            eq(bookings.classId, row.cls.id),
-            eq(bookings.status, "waitlisted"),
-          ),
-        )
-        .orderBy(asc(bookings.bookedAt))
-        .get();
+      // Freeing a confirmed spot promotes the member who has waited longest.
+      if (row.booking.status === "booked") {
+        const next = await tx
+          .select()
+          .from(bookings)
+          .where(
+            and(
+              eq(bookings.classId, row.cls.id),
+              eq(bookings.status, "waitlisted"),
+            ),
+          )
+          .orderBy(asc(bookings.bookedAt))
+          .get();
 
-      if (next) {
-        await db
-          .update(bookings)
-          .set({ status: "booked", creditsUsed: row.cls.creditCost })
-          .where(eq(bookings.id, next.id));
+        if (next) {
+          await tx
+            .update(bookings)
+            .set({ status: "booked", creditsUsed: row.cls.creditCost })
+            .where(eq(bookings.id, next.id));
 
-        if (next.membershipId) {
-          const ms = await db
-            .select()
-            .from(memberships)
-            .where(eq(memberships.id, next.membershipId))
-            .get();
+          if (next.membershipId) {
+            const ms = await tx
+              .select()
+              .from(memberships)
+              .where(eq(memberships.id, next.membershipId))
+              .get();
 
-          if (ms && ms.creditsRemaining < UNLIMITED_CREDITS) {
-            await db
-              .update(memberships)
-              .set({
-                creditsRemaining: Math.max(
-                  0,
-                  ms.creditsRemaining - row.cls.creditCost,
-                ),
-              })
-              .where(eq(memberships.id, ms.id));
+            if (ms && ms.creditsRemaining < UNLIMITED_CREDITS) {
+              await tx
+                .update(memberships)
+                .set({
+                  creditsRemaining: Math.max(
+                    0,
+                    ms.creditsRemaining - row.cls.creditCost,
+                  ),
+                })
+                .where(eq(memberships.id, ms.id));
+            }
           }
         }
       }
-    }
+    });
 
     return { ok: true, refunded: refundable };
   },
@@ -437,34 +441,38 @@ export const BookingService = {
 
     // --- atomic: create new booking + cancel old + record reschedule ---
     // NOTE: KNOWN BUG — waitlisted users on originalClass are NOT promoted.
-    const newBooking = await db
-      .insert(bookings)
-      .values({
-        classId: targetClass.id,
+    const newBooking = await db.transaction(async (tx) => {
+      const created = await tx
+        .insert(bookings)
+        .values({
+          classId: targetClass.id,
+          userId,
+          membershipId: originalBooking.membershipId,
+          status: targetIsFull ? "waitlisted" : "booked",
+          creditsUsed: originalBooking.creditsUsed, // Keep the same credits used
+        })
+        .returning()
+        .get();
+
+      // Cancel the original booking
+      await tx
+        .update(bookings)
+        .set({
+          status: "cancelled",
+          cancelledAt: new Date().toISOString(),
+        })
+        .where(eq(bookings.id, originalBooking.id));
+
+      // Record the reschedule
+      await tx.insert(reschedules).values({
         userId,
-        membershipId: originalBooking.membershipId,
-        status: targetIsFull ? "waitlisted" : "booked",
-        creditsUsed: originalBooking.creditsUsed, // Keep the same credits used
-      })
-      .returning()
-      .get();
+        fromBookingId: originalBooking.id,
+        toBookingId: created.id,
+        fromClassId: originalClass.id,
+        toClassId: targetClass.id,
+      });
 
-    // Cancel the original booking
-    await db
-      .update(bookings)
-      .set({
-        status: "cancelled",
-        cancelledAt: new Date().toISOString(),
-      })
-      .where(eq(bookings.id, originalBooking.id));
-
-    // Record the reschedule
-    await db.insert(reschedules).values({
-      userId,
-      fromBookingId: originalBooking.id,
-      toBookingId: newBooking.id,
-      fromClassId: originalClass.id,
-      toClassId: targetClass.id,
+      return created;
     });
 
     return {
